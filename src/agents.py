@@ -18,134 +18,65 @@ def research_agent(
     print("🔍 Research Agent")
     print("==================================")
 
-    full_prompt = f"""
-You are an advanced research assistant with expertise in information retrieval and academic research methodology. Your mission is to gather comprehensive, accurate, and relevant information on any topic requested by the user.
+     current_time = datetime.now().strftime('%Y-%m-%d')
+    
+    ### START CODE HERE ###
 
-## AVAILABLE RESEARCH TOOLS:
+    # Create a customizable prompt by defining the role (e.g., "research assistant"),
+    # listing tools (arxiv_tool, tavily_tool, wikipedia_tool) for various searches,
+    # specifying the task with a placeholder, and including a current_time placeholder.
+    prompt = f"""
+    
+    You are a research agent.
+    
+    Task: {task}, Current time: {current_time}
+    
+    Your goal:
+    1. Determine what the topic is from the task 
+    2. Explore the current consensus understanding and information of the topic by using the tools available to you.
+    3. Summarize your findings and highlight key findings
+    
+    Tools for you
+    
+    arxiv_search_tool(query) → search academic papers from arXiv
 
-1. **`tavily_search_tool`**: General web search engine
-   - USE FOR: Recent news, current events, blogs, websites, industry reports, and non-academic sources
-   - BEST FOR: Up-to-date information, diverse perspectives, practical applications, and general knowledge
+    tavily_search_tool(query) → perform web searches with the Tavily API
 
-2. **`arxiv_search_tool`**: Academic publication database
-   - USE FOR: Peer-reviewed research papers, technical reports, and scholarly articles
-   - LIMITED TO THESE DOMAINS ONLY:
-     * Computer Science
-     * Mathematics
-     * Physics
-     * Statistics
-     * Quantitative Biology
-     * Quantitative Finance
-     * Electrical Engineering and Systems Science
-     * Economics
-   - BEST FOR: Scientific evidence, theoretical frameworks, and technical details in supported fields
+    wikipedia_search_tool(query) → retrieve summaries from Wikipedia
+    
+    Output:
+    Summarize your findings and highlight key findings
+    Be sure to add references to statements
 
-3. **`wikipedia_search_tool`**: Encyclopedia resource
-   - USE FOR: Background information, definitions, overviews, historical context
-   - BEST FOR: Establishing foundational knowledge and understanding basic concepts
+    """
+    
+    # Create the messages dict to pass to the LLM. Remember this is a user prompt!
+    messages = [{"role": "user", "content": prompt}]
 
-## RESEARCH METHODOLOGY:
+    # Save all of your available tools in the tools list. These can be found in the research_tools module.
+    # You can identify each tool in your list like this: 
+    # research_tools.<name_of_tool>, where <name_of_tool> is replaced with the function name of the tool.
+    tools = [research_tools.arxiv_search_tool,research_tools.tavily_search_tool,research_tools.wikipedia_search_tool]
+    
+    # Call the model with tools enabled
+    response = CLIENT.chat.completions.create(  
+        # Set the model
+        model=model,
+        # Pass in the messages. You already defined this!
+        messages=messages,
+        # Pass in the tools list. You already defined this!
+        tools=tools,
+        # Set the LLM to automatically choose the tools
+        tool_choice=model,
+        # Set the max turns to 6
+        max_turns=5
+    )  
+    
+    ### END CODE HERE ###
 
-1. **Analyze Request**: Identify the core research questions and knowledge domains
-2. **Plan Search Strategy**: Determine which tools are most appropriate for the topic
-3. **Execute Searches**: Use the selected tools with effective keywords and queries
-4. **Evaluate Sources**: Prioritize credibility, relevance, recency, and diversity
-5. **Synthesize Findings**: Organize information logically with clear source attribution
-6. **Document Search Process**: Note which tools were used and why
-
-## TOOL SELECTION GUIDELINES:
-
-- For scientific/academic questions in supported domains → Use `arxiv_search_tool`
-- For recent developments, news, or practical information → Use `tavily_search_tool`
-- For fundamental concepts or historical context → Use `wikipedia_search_tool`
-- For comprehensive research → Use multiple tools strategically
-- NEVER use `arxiv_search_tool` for domains outside its supported list
-- ALWAYS verify information across multiple sources when possible
-
-## OUTPUT FORMAT:
-
-Present your research findings in a structured format that includes:
-1. **Summary of Research Approach**: Tools used and search strategy
-2. **Key Findings**: Organized by subtopic or source
-3. **Source Details**: Include URLs, titles, authors, and publication dates
-4. **Limitations**: Note any gaps in available information
-
-Today is {datetime.now().strftime("%Y-%m-%d")}.
-
-USER RESEARCH REQUEST:
-{prompt}
-""".strip()
-
-    messages = [{"role": "user", "content": full_prompt}]
-    tools = [arxiv_search_tool, tavily_search_tool, wikipedia_search_tool]
-
-    try:
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            max_turns=5,
-            temperature=0.0,  # Use deterministic output
-        )
-
-        content = resp.choices[0].message.content or ""
-
-        # ---- Collect tool calls from intermediate_responses and intermediate_messages
-        calls = []
-
-        # A) From intermediate_responses
-        for ir in getattr(resp, "intermediate_responses", []) or []:
-            try:
-                tcs = ir.choices[0].message.tool_calls or []
-                for tc in tcs:
-                    calls.append((tc.function.name, tc.function.arguments))
-            except Exception:
-                pass
-
-        # B) From intermediate_messages on the final message
-        for msg in getattr(resp.choices[0].message, "intermediate_messages", []) or []:
-            # assistant message with tool_calls
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                for tc in msg.tool_calls:
-                    calls.append((tc.function.name, tc.function.arguments))
-
-        # Dedup while preserving order
-        seen = set()
-        dedup_calls = []
-        for name, args in calls:
-            key = (name, args)
-            if key not in seen:
-                seen.add(key)
-                dedup_calls.append((name, args))
-
-        # Pretty print args: JSON->dict if possible
-        tool_lines = []
-        for name, args in dedup_calls:
-            arg_text = str(args)
-            try:
-                import json as _json
-
-                parsed = _json.loads(args) if isinstance(args, str) else args
-                if isinstance(parsed, dict):
-                    kv = ", ".join(f"{k}={repr(v)}" for k, v in parsed.items())
-                    arg_text = kv
-            except Exception:
-                # keep raw string if not JSON
-                pass
-            tool_lines.append(f"- {name}({arg_text})")
-
-        if tool_lines:
-            tools_html = (
-                "<h2 style='font-size:1.5em; color:#2563eb;'>📎 Tools used</h2>"
-            )
-            tools_html += (
-                "<ul>" + "".join(f"<li>{line}</li>" for line in tool_lines) + "</ul>"
-            )
-            content += "\n\n" + tools_html
-
-        print("✅ Output:\n", content)
-        return content, messages
+    content = response.choices[0].message.content
+    print("✅ Output:\n", content)
+    return (content, messages) if return_messages else content 
 
     except Exception as e:
         print("❌ Error:", e)
@@ -164,86 +95,53 @@ def writer_agent(
     print("✍️ Writer Agent")
     print("==================================")
 
-    system_message = """
-You are an expert academic writer with a PhD-level understanding of scholarly communication. Your task is to synthesize research materials into a comprehensive, well-structured academic report.
+    ### START CODE HERE ###
+    
+    # Create the system prompt.
+    # This should assign the LLM the role of a writing agent specialized in generating well-structured academic or technical content
+    system_prompt = f"""
+    
+    You are an expert, educated writer. 
+    Present the context in an objective and organized report. 
+    Be concise and correct based on the facts given to you. 
+    Be sure to use all of the research material given to you
+    and cite the sources.
 
-## REPORT REQUIREMENTS:
-- Produce a COMPLETE, POLISHED, and PUBLICATION-READY academic report in Markdown format
-- Create original content that thoroughly analyzes the provided research materials
-- DO NOT merely summarize the sources; develop a cohesive narrative with critical analysis
-- Length should be appropriate to thoroughly cover the topic (typically 1500-3000 words)
+    Output of the report should be in a well structured format with sections and subsections. 
+    The report should be detailed and self-contained.
+    Use HTML markdown formatting to structure the report.
 
-## MANDATORY STRUCTURE:
-1. **Title**: Clear, concise, and descriptive of the content
-2. **Abstract**: Brief summary (100-150 words) of the report's purpose, methods, and key findings
-3. **Introduction**: Present the topic, research question/problem, significance, and outline of the report
-4. **Background/Literature Review**: Contextualize the topic within existing scholarship
-5. **Methodology**: If applicable, describe research methods, data collection, and analytical approaches
-6. **Key Findings/Results**: Present the primary outcomes and evidence
-7. **Discussion**: Interpret findings, address implications, limitations, and connections to broader field
-8. **Conclusion**: Synthesize main points and suggest directions for future research
-9. **References**: Complete list of all cited works
+    The report should be in this format:
+    # Title
+    ## Summary
+    ## Key Findings
+    ## Discussion
+    ## Conclusion
+    ## References
+    
+    """
 
-## ACADEMIC WRITING GUIDELINES:
-- Maintain formal, precise, and objective language throughout
-- Use discipline-appropriate terminology and concepts
-- Support all claims with evidence and reasoning
-- Develop logical flow between ideas, paragraphs, and sections
-- Include relevant examples, case studies, data, or equations to strengthen arguments
-- Address potential counterarguments and limitations
+    # Define the system msg by using the system_prompt and assigning the role of system
+    system_msg =   {
+            "role": "system",
+            "content": system_prompt
+        }
 
-## CITATION AND REFERENCE RULES:
-- Use numeric inline citations [1], [2], etc. for all borrowed ideas and information
-- Every claim based on external sources MUST have a citation
-- Each inline citation must correspond to a complete entry in the References section
-- Every reference listed must be cited at least once in the text
-- Preserve ALL original URLs, DOIs, and bibliographic information from source materials
-- Format references consistently according to academic standards
+    # Define the user msg. In this case the user prompt should be the task passed to the function
+    user_msg = {"role": "user", "content": task}
 
-## FORMATTING GUIDELINES:
-- Use Markdown syntax for all formatting (headings, emphasis, lists, etc.)
-- Include appropriate section headings and subheadings to organize content
-- Format any equations, tables, or figures according to academic conventions
-- Use bullet points or numbered lists when appropriate for clarity
-- Use html syntax to handle all links with target="_blank", so user can always open link in new tab on both html and markdown format
+    # Add both system and user messages to the messages list
+    messages = [system_msg, user_msg]
+    
+    ### END CODE HERE ###
 
-Output the complete report in Markdown format only. Do not include meta-commentary about the writing process.
+    response = CLIENT.chat.completions.create(
+        model=model, 
+        messages=messages,
+        temperature=1.0
+    )
 
-INTERNAL CHECKLIST (DO NOT INCLUDE IN OUTPUT):
-- [ ] Incorporated all provided research materials
-- [ ] Developed original analysis beyond mere summarization
-- [ ] Included all mandatory sections with appropriate content
-- [ ] Used proper inline citations for all borrowed content
-- [ ] Created complete References section with all cited sources
-- [ ] Maintained academic tone and language throughout
-- [ ] Ensured logical flow and coherent structure
-- [ ] Preserved all source URLs and bibliographic information
-""".strip()
-
-    messages = [
-        {"role": "system", "content": system_message},
-        {"role": "user", "content": prompt},
-    ]
-
-    def _call(messages_):
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages_,
-            temperature=0,
-            max_tokens=max_tokens,
-        )
-        return resp.choices[0].message.content or ""
-
-    def _word_count(md_text: str) -> int:
-        import re
-
-        words = re.findall(r"\b\w+\b", md_text)
-        return len(words)
-
-    content = _call(messages)
-
-    print("✅ Output:\n", content)
-    return content, messages
+    return response.choices[0].message.content
 
 
 def editor_agent(
@@ -255,42 +153,39 @@ def editor_agent(
     print("🧠 Editor Agent")
     print("==================================")
 
-    system_message = """
-You are a professional academic editor with expertise in improving scholarly writing across disciplines. Your task is to refine and elevate the quality of the academic text provided.
+    ### START CODE HERE ###
 
-## Your Editing Process:
-1. Analyze the overall structure, argument flow, and coherence of the text
-2. Ensure logical progression of ideas with clear topic sentences and transitions between paragraphs
-3. Improve clarity, precision, and conciseness of language while maintaining academic tone
-4. Verify technical accuracy (to the extent possible based on context)
-5. Enhance readability through appropriate formatting and organization
-
-## Specific Elements to Address:
-- Strengthen thesis statements and main arguments
-- Clarify complex concepts with additional explanations or examples where needed
-- Add relevant equations, diagrams, or illustrations (described in markdown) when they would enhance understanding
-- Ensure proper integration of evidence and maintain academic rigor
-- Standardize terminology and eliminate redundancies
-- Improve sentence variety and paragraph structure
-- Preserve all citations [1], [2], etc., and maintain the integrity of the References section
-
-## Formatting Guidelines:
-- Use markdown formatting consistently for headings, emphasis, lists, etc.
-- Structure content with appropriate section headings and subheadings
-- Format equations, tables, and figures according to academic standards
-
-Return only the revised, polished text in Markdown format without explanatory comments about your edits.
-""".strip()
-
-    messages = [
-        {"role": "system", "content": system_message},
-        {"role": "user", "content": prompt},
-    ]
-
-    response = client.chat.completions.create(
-        model=model, messages=messages, temperature=0
+    # Create the system prompt.
+    # This should assign the LLM the role of an editor agent specialized in reflecting on, critiquing, or improving existing drafts.
+    system_prompt = f"""
+    
+    Critique the given task
+    
+    Task: {task}
+    
+    Ensure it is correct and concise and 
+    can be easy to understand. Remove any redunancy and make statements clearer if needed.
+    Make sure all citations are provided and correct. Ensure the report is well structured and organized.
+    
+    """
+    
+    # Define the system msg by using the system_prompt and assigning the role of system
+    system_msg = {
+        "role": "system",
+        "content": system_prompt
+    }
+    
+    # Define the user msg. In this case the user prompt should be the task passed to the function
+    user_msg = {"role": "user", "content": task}
+    
+    # Add both system and user messages to the messages list
+    messages = [system_msg, user_msg]
+    ### END CODE HERE ###
+    
+    response = CLIENT.chat.completions.create(
+        model=model, 
+        messages=messages,
+        temperature=0.7 
     )
-
-    content = response.choices[0].message.content
-    print("✅ Output:\n", content)
-    return content, messages
+    
+    return response.choices[0].message.content
